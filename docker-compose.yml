@@ -1,0 +1,105 @@
+#version: '3.8'
+
+services:
+  postgres:
+    image: postgres:13
+    container_name: postgres
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: yourpassword
+      POSTGRES_DB: kafka_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - kafka-postgres-data:/var/lib/postgresql/data
+      - ./init_scripts:/docker-entrypoint-initdb.d
+    networks:
+      - kafka-network
+
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@admin.com
+      PGADMIN_DEFAULT_PASSWORD: yourpassword
+    ports:
+      - "8081:80"
+    depends_on:
+      - postgres
+    volumes:
+      - kafka-pgadmin-data:/var/lib/pgadmin
+    networks:
+      - kafka-network
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:latest
+    container_name: zookeeper
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+     - kafka-network
+
+  kafka:
+    image: confluentinc/cp-kafka:latest
+    container_name: kafka
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+    depends_on:
+      - zookeeper
+    networks:
+      - kafka-network
+
+  akhq:
+    image: tchiotludo/akhq
+    container_name: akhq
+    ports:
+      - "8082:8080"
+    environment:
+      AKHQ_CONFIGURATION: |
+        akhq:
+          connections:
+            kafka-cluster:
+              properties:
+                bootstrap.servers: "kafka:29092"
+    depends_on:
+      - kafka
+    networks:
+      - kafka-network
+
+  spring-boot-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080" # แมปพอร์ต 8080 บนโฮสต์ไปยังคอนเทนเนอร์
+      - "5005:5005" # แมปพอร์ต 5005 บนโฮสต์ไปยังคอนเทนเนอร์
+    environment:
+      - SPRING_PROFILES_ACTIVE=prod # กำหนด Spring Profile
+      - JAVA_OPTS=-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005 # กำหนด Debug Port
+    volumes:
+      - ./src:/app/src # คัดลอก source code สำหรับ hot reload
+      - ./pom.xml:/app/pom.xml # คัดลอก pom.xml
+    depends_on:
+      - postgres
+    networks:
+      - kafka-network
+
+volumes:
+  kafka-postgres-data:
+  kafka-pgadmin-data:
+
+networks:
+    kafka-network:
+        driver: bridge
